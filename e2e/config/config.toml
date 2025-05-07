@@ -1,0 +1,54 @@
+# Copyright The TrustTunnel Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# trust-tunnel-agent.toml example configuration file
+
+host = "0.0.0.0"
+port = "5006"
+
+[log_config]
+level = "info"
+expire_days = 14
+
+[session_config]
+phys_tunnel = "nsenter"
+delay_release_session_timeout = "300s"
+
+[container_config]
+endpoint = "unix:///var/run-mount/docker.sock"
+container_runtime = "docker"
+rootfs_prefix = "/rootfs"
+docker_api_version = "1.40"
+namespace = "k8s.io"
+
+[sidecar_config]
+image = "trust-tunnel-sidecar:latest"
+limit = 150
+
+[auth_config]
+# name = "example"
+# params = {"param1" = "value1","param2" = "value2"}
+
+[tls_config]
+tls_verify = false
+
+[ntls_config]
+ntls_verify = false
+
+
+
+
+
+
+

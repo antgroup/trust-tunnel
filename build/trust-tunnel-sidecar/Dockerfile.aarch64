@@ -1,0 +1,5 @@
+FROM busybox:1.35-aarch64
+
+ADD ./superman.sh /
+RUN chmod +x /superman.sh
+CMD ["/superman.sh", "root", "/bin/bash]

@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trust-tunnel
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: trust-tunnel-agent
+  namespace: trust-tunnel
+  labels:
+    app: trust-tunnel-agent
+spec:
+  selector:
+    matchLabels:
+      app: trust-tunnel-agent
+  template:
+    metadata:
+      labels:
+        app: trust-tunnel-agent
+    spec:
+      containers:
+        - name: trust-tunnel-agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: "{{ .Values.image.pullPolicy }}"
+          securityContext:
+            privileged: true
+          stdin: true
+          tty: true
+          env:
+            - name: RequestedIP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          volumeMounts:
+            - name: runtime-sock
+              mountPath: /var/run-mount/
+              mountPropagation: HostToContainer
+              readOnly: true
+            - name: host-root
+              mountPath: /rootfs/root
+            - name: host-home
+              mountPath: /rootfs/home
+              mountPropagation: HostToContainer
+            - name: host-passwd
+              mountPath: /rootfs/etc/passwd
+              readOnly: true
+          resources:
+            requests:
+              cpu: "{{ .Values.resources.requests.cpu }}"
+              memory: "{{ .Values.resources.requests.memory }}"
+            limits:
+              cpu: "{{ .Values.resources.limits.cpu }}"
+              memory: "{{ .Values.resources.limits.memory }}"
+      volumes:
+        - name: runtime-sock
+          hostPath:
+            path: /var/run/
+            type: Directory
+        - name: host-root
+          hostPath:
+            path: /root/
+            type: Directory
+        - name: host-home
+          hostPath:
+            path: /home/
+            type: Directory
+        - name: host-passwd
+          hostPath:
+            path: /etc/passwd
+      hostNetwork: true
+      hostPID: true
+      nodeSelector: {{ .Values.nodeSelector | toYaml | nindent 8 }}
+      tolerations: {{ .Values.tolerations | toYaml | nindent 8 }}
+      affinity: {{ .Values.affinity | toYaml | nindent 8 }}

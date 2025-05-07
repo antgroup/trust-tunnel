@@ -1,0 +1,46 @@
+# trust-tunnel-agent.toml example configuration file
+
+# server config
+host = "0.0.0.0"
+port = "5006"
+
+[log_config]
+level = "info"
+expire_days = 14
+
+[session_config]
+phys_tunnel = "nsenter"
+delay_release_session_timeout = "300s"
+
+[container_config]
+endpoint = "unix:///var/run-mount/docker.sock"
+container_runtime = "docker" #docker or containerd
+rootfs_prefix = "/rootfs"
+docker_api_version = "1.40"
+namespace = "k8s.io"
+
+[sidecar_config]
+image = "trust-tunnel-sidecar:latest"
+limit = 150
+
+[auth_config]
+# name = "example"
+# params = {"auth_url" = "http://trust-tunnel/auth","param2" = "value2"}
+
+[tls_config]
+tls_verify = false
+# tls_ca = "./config/certs/tls/ca.crt"
+# tls_cert = "./config/certs/tls/server.crt"
+# tls_key = "./config/certs/tls/server.key"
+
+[ntls_config]
+ntls_verify = false
+# ntls_sign_cert_file = "./config/certs/ntls/server_sign.crt"
+# ntls_sign_key_file = "./config/certs/ntls/server_sign.key"
+# ntls_enc_cert_file = "./config/certs/ntls/server_enc.crt"
+# ntls_enc_key_file = "./config/certs/ntls/server_enc.key"
+# ntls_ca_file = "./config/certs/ntls/chain-ca.crt"
+# cipher = "ECC-SM2-WITH-SM4-SM3"
+
+
+

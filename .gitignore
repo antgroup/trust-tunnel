@@ -1,0 +1,9 @@
+# Mac OS X files
+.DS_Store
+cmd/.DS_Store
+
+.idea
+.out/
+
+vendor/
+.vscode/ 
