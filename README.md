@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./docs/images/trust-tunnel-logo.png" width="50%">
+  <img src="./docs/images/trust-tunnel-logo.png" width="200">
 </p>
 
 # Trust-Tunnel: Secure Access to Remote Containers & Hosts
