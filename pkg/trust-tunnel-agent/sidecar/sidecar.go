@@ -55,15 +55,11 @@ func PullMissingImage(image, auth string, force bool, apiClient client.CommonAPI
 		return "", fmt.Errorf("container client is not ready")
 	}
 
-	if strings.TrimSpace(image) == "" {
-		image = defaultSidecarImage
-	}
-
 	exists, err := imageExists(apiClient, image)
 	if err != nil {
 		logger.Errorf("check image existence error: %s", err.Error())
 
-		return "", err
+		return image, err
 	}
 
 	if exists && !force {
@@ -84,7 +80,7 @@ func PullMissingImage(image, auth string, force bool, apiClient client.CommonAPI
 
 	body, err := apiClient.ImagePull(context.Background(), name+":"+tag, imageTypes.PullOptions{RegistryAuth: base64.URLEncoding.EncodeToString([]byte(auth))})
 	if err != nil {
-		return "", err
+		return image, err
 	}
 	defer body.Close()
 
@@ -97,7 +93,7 @@ func PullMissingImage(image, auth string, force bool, apiClient client.CommonAPI
 		}
 
 		if err != nil {
-			return "", fmt.Errorf("failed to read image pulling content: %w", err)
+			return image, fmt.Errorf("failed to read image pulling content: %w", err)
 		}
 
 		logger.Debugf("%s", string(line))
@@ -111,7 +107,7 @@ func PullMissingImage(image, auth string, force bool, apiClient client.CommonAPI
 		return image, nil
 	}
 
-	return "", fmt.Errorf("failed to pull image %s", image)
+	return image, fmt.Errorf("failed to pull image %s", image)
 }
 
 // Init sets up the sidecar container environment.
