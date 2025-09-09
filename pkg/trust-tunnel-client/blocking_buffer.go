@@ -105,6 +105,7 @@ func (b *BlockingBuffer) Close() error {
 		// Wait for all data to be read before close the buffer.
 		time.Sleep(time.Millisecond * 100)
 	}
+
 	close(b.signal)
 	b.lock.Lock()
 

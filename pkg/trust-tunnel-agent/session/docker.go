@@ -211,7 +211,7 @@ func establishDockerSession(c *Config, containerClient client.CommonAPIClient) (
 	if c.LoginName != "" {
 		_, _, loginDir, err = sessionutil.GetUserInfo(c.LoginName, c.RootfsPrefix+"/etc/passwd")
 		if err != nil {
-			return nil, fmt.Errorf(sessionutil.WrapContainerError(err.Error(), c.ContainerID))
+			return nil, fmt.Errorf("%s", sessionutil.WrapContainerError(err.Error(), c.ContainerID))
 		}
 	}
 
@@ -234,7 +234,7 @@ func establishDockerSession(c *Config, containerClient client.CommonAPIClient) (
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf(sessionutil.WrapContainerError(err.Error(), c.ContainerID))
+		return nil, fmt.Errorf("%s", sessionutil.WrapContainerError(err.Error(), c.ContainerID))
 	}
 
 	go s.handleStreamOutput(!c.DisableCleanMode)
