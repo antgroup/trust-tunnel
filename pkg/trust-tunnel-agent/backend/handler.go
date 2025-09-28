@@ -106,13 +106,10 @@ func NewHandler(c *Config) (*Handler, error) {
 	h.authHandler = authHandler
 
 	// Pull the sidecar image during booting.
-	image, err := sidecar.Init(c.ContainerConfig.Endpoint, c.SidecarConfig.Image, c.SidecarConfig.ImageHubAuth, h.dockerClient)
+	err := sidecar.Init(c.ContainerConfig.Endpoint, c.SidecarConfig.Image, c.SidecarConfig.ImageHubAuth, h.dockerClient)
 	if err != nil {
 		logger.Errorf("init sidecar with image %s error: %v, ignore it", c.SidecarConfig.Image, err)
-	} else {
-		c.SidecarConfig.Image = image
 	}
-
 	// Clean legacy sidecar container periodically.
 	go sidecar.CleanLegacyContainerPeriodically(h.dockerClient)
 

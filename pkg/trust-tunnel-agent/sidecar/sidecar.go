@@ -113,25 +113,25 @@ func PullMissingImage(image, auth string, force bool, apiClient client.CommonAPI
 // Init sets up the sidecar container environment.
 // It primarily verifies the availability of the Docker endpoint and pulls the required sidecar image.
 // If the Docker environment is not ready or the image pull fails, returns an error.
-func Init(endpoint, image, auth string, apiClient client.CommonAPIClient) (string, error) {
+func Init(endpoint, image, auth string, apiClient client.CommonAPIClient) error {
 	if apiClient == nil {
-		return "", fmt.Errorf("container client is nil")
+		return fmt.Errorf("container client is nil")
 	}
 
 	if _, err := os.Stat(strings.TrimPrefix(endpoint, "unix://")); err != nil {
 		logger.Infof("docker endpoint(%v) not exits,maybe docker env not ready,ignore", strings.TrimPrefix(endpoint, "unix://"))
 
-		return "", err
+		return err
 	}
 
 	image, err := PullMissingImage(image, auth, false, apiClient)
 	if err != nil {
 		logger.Errorf("pull sidecar image %s failed: %v", image, err)
 
-		return "", err
+		return err
 	}
 
-	return image, nil
+	return nil
 }
 
 // CleanLegacyContainerPeriodically list all the containers,include the not running containers,
