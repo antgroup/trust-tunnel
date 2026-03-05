@@ -53,7 +53,14 @@ type ContainerRuntime string
 const (
 	Docker     ContainerRuntime = "docker"
 	Containerd ContainerRuntime = "containerd"
-	bufferSize                  = 4096
+)
+
+const (
+	// bufferSize is the buffer size for reading container output.
+	bufferSize = 4096
+
+	// streamChannelSize is the buffer size for stdout/stderr channels.
+	streamChannelSize = 64
 )
 
 const (
@@ -86,19 +93,19 @@ type dockerSession struct {
 	lock sync.Mutex
 }
 
-func (s *dockerSession) NextStdin() (io.WriteCloser, error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+func (ds *dockerSession) NextStdin() (io.WriteCloser, error) {
+	ds.lock.Lock()
+	defer ds.lock.Unlock()
 
-	if s.conn == nil {
+	if ds.conn == nil {
 		return nil, io.EOF
 	}
 
-	return s.conn, nil
+	return ds.conn, nil
 }
 
-func (s *dockerSession) NextStdout() (io.Reader, error) {
-	r, ok := <-s.stdoutCh
+func (ds *dockerSession) NextStdout() (io.Reader, error) {
+	r, ok := <-ds.stdoutCh
 	if !ok {
 		return nil, io.EOF
 	}
@@ -106,8 +113,8 @@ func (s *dockerSession) NextStdout() (io.Reader, error) {
 	return r, nil
 }
 
-func (s *dockerSession) NextStderr() (io.Reader, error) {
-	r, ok := <-s.stderrCh
+func (ds *dockerSession) NextStderr() (io.Reader, error) {
+	r, ok := <-ds.stderrCh
 	if !ok {
 		return nil, io.EOF
 	}
@@ -115,70 +122,70 @@ func (s *dockerSession) NextStderr() (io.Reader, error) {
 	return r, nil
 }
 
-func (s *dockerSession) StderrDone() error {
-	s.stderrDone <- struct{}{}
+func (ds *dockerSession) StderrDone() error {
+	ds.stderrDone <- struct{}{}
 
 	return nil
 }
 
-func (s *dockerSession) StdoutDone() error {
-	s.stdoutDone <- struct{}{}
+func (ds *dockerSession) StdoutDone() error {
+	ds.stdoutDone <- struct{}{}
 
 	return nil
 }
 
-func (s *dockerSession) Clean() error {
-	s.lock.Lock()
-	s.conn.Close()
-	s.conn = nil
-	s.lock.Unlock()
+func (ds *dockerSession) Clean() error {
+	ds.lock.Lock()
+	ds.conn.Close()
+	ds.conn = nil
+	ds.lock.Unlock()
 
-	err := s.cleanLegacyProcess(s.isExec)
+	err := ds.cleanLegacyProcess(ds.isExec)
 	if err != nil && !strings.Contains(err.Error(), "process already finished") {
 		logger.Errorf("kill legacy process err:%v", err)
 	}
 
-	if !s.isExec {
+	if !ds.isExec {
 		// Remove sidecar container.
-		err := s.client.ContainerRemove(context.Background(), s.respID, container.RemoveOptions{Force: true})
+		err := ds.client.ContainerRemove(context.Background(), ds.respID, container.RemoveOptions{Force: true})
 		if err != nil {
-			logger.WithField("container", s.respID).Errorf("remove container error: %v", err)
+			logger.WithField("container", ds.respID).Errorf("remove container error: %v", err)
 
 			return err
 		}
 
-		logger.WithField("container", s.respID).Infof("remove container done")
+		logger.WithField("container", ds.respID).Infof("remove container done")
 	}
 
 	return nil
 }
 
-func (s *dockerSession) Resize(h, w int) error {
+func (ds *dockerSession) Resize(h, w int) error {
 	logger.Debugf("resize to %d*%d", h, w)
 
-	if s.isExec {
-		return s.client.ContainerExecResize(s.ctx, s.respID, container.ResizeOptions{
+	if ds.isExec {
+		return ds.client.ContainerExecResize(ds.ctx, ds.respID, container.ResizeOptions{
 			Height: uint(h),
 			Width:  uint(w),
 		})
 	}
 
-	return s.client.ContainerResize(s.ctx, s.respID, container.ResizeOptions{
+	return ds.client.ContainerResize(ds.ctx, ds.respID, container.ResizeOptions{
 		Height: uint(h),
 		Width:  uint(w),
 	})
 }
 
-func (s *dockerSession) ExitCode() int {
-	<-s.stdoutDone
-	<-s.stderrDone
+func (ds *dockerSession) ExitCode() int {
+	<-ds.stdoutDone
+	<-ds.stderrDone
 
 	ctx := context.Background()
 
-	if s.isExec {
-		inspect, err := s.client.ContainerExecInspect(ctx, s.respID)
+	if ds.isExec {
+		inspect, err := ds.client.ContainerExecInspect(ctx, ds.respID)
 		if err != nil {
-			logger.WithError(err).Errorf("failed to wait container %s", s.respID)
+			logger.WithError(err).Errorf("failed to wait container %s", ds.respID)
 
 			return 0
 		}
@@ -186,7 +193,7 @@ func (s *dockerSession) ExitCode() int {
 		return inspect.ExitCode
 	}
 
-	statusCode, err := waitContainer(s.client, s.respID)
+	statusCode, err := waitContainer(ds.client, ds.respID)
 	if err != nil {
 		logger.Errorf("wait container error: %s", err.Error())
 
@@ -197,72 +204,70 @@ func (s *dockerSession) ExitCode() int {
 }
 
 // establishDockerSession creates a new Docker session based on the given configuration.
-func establishDockerSession(c *Config, containerClient client.CommonAPIClient) (*dockerSession, error) {
+func establishDockerSession(config *Config, containerClient client.CommonAPIClient) (*dockerSession, error) {
 	if containerClient == nil {
 		return nil, fmt.Errorf("container Client is nil")
 	}
 
-	var s *dockerSession
-
+	var session *dockerSession
 	var loginDir string
-
 	var err error
 
-	if c.LoginName != "" {
-		_, _, loginDir, err = sessionutil.GetUserInfo(c.LoginName, c.RootfsPrefix+"/etc/passwd")
+	if config.LoginName != "" {
+		_, _, loginDir, err = sessionutil.GetUserInfo(config.LoginName, config.RootfsPrefix+"/etc/passwd")
 		if err != nil {
-			return nil, fmt.Errorf("%s", sessionutil.WrapContainerError(err.Error(), c.ContainerID))
+			return nil, fmt.Errorf("%s", sessionutil.WrapContainerError(err.Error(), config.ContainerID))
 		}
 	}
 
-	if len(c.Cmd) > 0 {
-		c.Cmd[len(c.Cmd)-1] = "cd " + loginDir + ";" + c.Cmd[len(c.Cmd)-1]
+	if len(config.Cmd) > 0 {
+		config.Cmd[len(config.Cmd)-1] = "cd " + loginDir + ";" + config.Cmd[len(config.Cmd)-1]
 	}
 
 	// If clean mode is disabled, exec into the container directly.
-	if c.DisableCleanMode {
-		logger.WithFields(logrus.Fields{"disable-clean-mode": c.DisableCleanMode}).
-			Infof("exec into container %s directly", c.ContainerID)
+	if config.DisableCleanMode {
+		logger.WithFields(logrus.Fields{"disable-clean-mode": config.DisableCleanMode}).
+			Infof("exec into container %s directly", config.ContainerID)
 
-		s, err = execContainer(c, containerClient)
+		session, err = execContainer(config, containerClient)
 	} else {
 		// Otherwise, attach a sidecar to the container and execute the command using nsenter inside it.
-		logger.WithFields(logrus.Fields{"disable-clean-mode": c.DisableCleanMode}).
-			Infof("attach sidecar to container %s", c.ContainerID)
+		logger.WithFields(logrus.Fields{"disable-clean-mode": config.DisableCleanMode}).
+			Infof("attach sidecar to container %s", config.ContainerID)
 
-		s, err = attachSidecar(c, containerClient)
+		session, err = attachSidecar(config, containerClient)
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("%s", sessionutil.WrapContainerError(err.Error(), c.ContainerID))
+		return nil, fmt.Errorf("%s", sessionutil.WrapContainerError(err.Error(), config.ContainerID))
 	}
 
-	go s.handleStreamOutput(!c.DisableCleanMode)
+	go session.handleStreamOutput(!config.DisableCleanMode)
 
-	return s, nil
+	return session, nil
 }
 
 // attachSidecar attaches a sidecar container to the given container and returns a new Docker session.
-func attachSidecar(c *Config, apiClient client.CommonAPIClient) (*dockerSession, error) {
+func attachSidecar(config *Config, apiClient client.CommonAPIClient) (*dockerSession, error) {
 	ctx := context.Background()
 
 	// Pull the sidecar image if it's not already present.
-	image, err := sidecar.PullMissingImage(c.SidecarImage, c.ImageHubAuth, false, apiClient)
+	image, err := sidecar.PullMissingImage(config.SidecarImage, config.ImageHubAuth, false, apiClient)
 	if err != nil {
 		return nil, err
 	}
 
-	if c.LoginName == "" {
+	if config.LoginName == "" {
 		return nil, fmt.Errorf("empty login name isn't allowed")
 	}
 
 	// Build the command to execute inside the sidecar container.
-	cmd := []string{"/superman.sh", "-u", c.LoginName}
-	if c.LoginGroup != "" {
-		cmd = append(cmd, "-g", c.LoginGroup)
+	cmd := []string{"/superman.sh", "-u", config.LoginName}
+	if config.LoginGroup != "" {
+		cmd = append(cmd, "-g", config.LoginGroup)
 	}
 
-	cmd = append(cmd, c.Cmd...)
+	cmd = append(cmd, config.Cmd...)
 
 	// Configure the container to run the command inside the sidecar.
 	contConfig := &container.Config{
@@ -270,34 +275,34 @@ func attachSidecar(c *Config, apiClient client.CommonAPIClient) (*dockerSession,
 		AttachStdin:  true,
 		AttachStdout: true,
 		Cmd:          cmd,
-		Env:          []string{"RequestedIP=0.0.0.0", "HOME=/home/" + c.LoginName},
+		Env:          []string{"RequestedIP=0.0.0.0", "HOME=/home/" + config.LoginName},
 		Entrypoint:   nil,
 		Image:        image,
-		OpenStdin:    c.Interactive,
-		StdinOnce:    c.Interactive,
-		Tty:          c.Tty,
+		OpenStdin:    config.Interactive,
+		StdinOnce:    config.Interactive,
+		Tty:          config.Tty,
 	}
 	logger.Infof("entering container with command: %v", contConfig.Cmd)
 
 	// Validating the resource values.
-	if c.Cpus <= 0 {
-		c.Cpus = DefaultCPUs
+	if config.Cpus <= 0 {
+		config.Cpus = DefaultCPUs
 	}
 
-	if c.MemoryMB <= 0 {
-		c.MemoryMB = DefaultMemoryMB
+	if config.MemoryMB <= 0 {
+		config.MemoryMB = DefaultMemoryMB
 	}
 
 	// Configure the host to run the sidecar container.
 	hostConfig := &container.HostConfig{
 		AutoRemove:  false,
-		PidMode:     container.PidMode("container:" + c.ContainerID),
-		NetworkMode: container.NetworkMode("container:" + c.ContainerID),
+		PidMode:     container.PidMode("container:" + config.ContainerID),
+		NetworkMode: container.NetworkMode("container:" + config.ContainerID),
 		Privileged:  true,
 		Resources: container.Resources{
 			CPUPeriod: 100000,
-			CPUQuota:  int64(c.Cpus * 100000),
-			Memory:    int64(c.MemoryMB) * 1024 * 1024,
+			CPUQuota:  int64(config.Cpus * 100000),
+			Memory:    int64(config.MemoryMB) * 1024 * 1024,
 		},
 	}
 
@@ -336,9 +341,9 @@ func attachSidecar(c *Config, apiClient client.CommonAPIClient) (*dockerSession,
 		isExec:     false,
 		conn:       resp.Conn,
 		reader:     resp.Reader,
-		tty:        c.Tty,
-		stdoutCh:   make(chan io.Reader, 64),
-		stderrCh:   make(chan io.Reader, 64),
+		tty:        config.Tty,
+		stdoutCh:   make(chan io.Reader, streamChannelSize),
+		stderrCh:   make(chan io.Reader, streamChannelSize),
 		stdoutDone: make(chan struct{}, 1),
 		stderrDone: make(chan struct{}, 1),
 		sidecarID:  createResp.ID,
@@ -347,25 +352,25 @@ func attachSidecar(c *Config, apiClient client.CommonAPIClient) (*dockerSession,
 
 // execContainer executes the given command inside the given container using the way of 'docker exec',
 // returns a new Docker session.
-func execContainer(c *Config, apiClient client.CommonAPIClient) (*dockerSession, error) {
+func execContainer(config *Config, apiClient client.CommonAPIClient) (*dockerSession, error) {
 	ctx := context.Background()
 
 	// Configure the exec config.
 	createExecConfig := types.ExecConfig{
-		Cmd:          c.Cmd,
-		Tty:          c.Tty,
+		Cmd:          config.Cmd,
+		Tty:          config.Tty,
 		AttachStderr: true,
 		AttachStdout: true,
-		AttachStdin:  c.Interactive,
-		User:         c.LoginName,
+		AttachStdin:  config.Interactive,
+		User:         config.LoginName,
 	}
 
-	createResp, err := apiClient.ContainerExecCreate(ctx, c.ContainerID, createExecConfig)
+	createResp, err := apiClient.ContainerExecCreate(ctx, config.ContainerID, createExecConfig)
 	if err != nil {
 		return nil, fmt.Errorf("create container exec error: %v", err)
 	}
 
-	attachResp, err := apiClient.ContainerExecAttach(ctx, createResp.ID, types.ExecStartCheck{Tty: c.Tty})
+	attachResp, err := apiClient.ContainerExecAttach(ctx, createResp.ID, types.ExecStartCheck{Tty: config.Tty})
 	if err != nil {
 		return nil, fmt.Errorf("start container exec error: %v", err)
 	}
@@ -377,48 +382,48 @@ func execContainer(c *Config, apiClient client.CommonAPIClient) (*dockerSession,
 		isExec:     true,
 		conn:       attachResp.Conn,
 		reader:     attachResp.Reader,
-		tty:        c.Tty,
-		stdoutCh:   make(chan io.Reader, 64),
-		stderrCh:   make(chan io.Reader, 64),
+		tty:        config.Tty,
+		stdoutCh:   make(chan io.Reader, streamChannelSize),
+		stderrCh:   make(chan io.Reader, streamChannelSize),
 		stdoutDone: make(chan struct{}, 1),
 		stderrDone: make(chan struct{}, 1),
 	}, nil
 }
 
 // handleStreamOutput handles the output streaming of the session depending on whether it has a tty or is exec.
-func (s *dockerSession) handleStreamOutput(exec bool) {
+func (ds *dockerSession) handleStreamOutput(exec bool) {
 	// TTY case.
-	if s.tty {
-		s.streamUnifiedOutput()
+	if ds.tty {
+		ds.streamUnifiedOutput()
 	} else if exec {
-		s.streamSplitOutput()
+		ds.streamSplitOutput()
 	} else {
-		s.streamUnifiedOutput()
+		ds.streamUnifiedOutput()
 	}
 }
 
 // streamUnifiedOutput reads the output stream directly and sends it without distinguishing between stdout and stderr.
-func (s *dockerSession) streamUnifiedOutput() {
+func (ds *dockerSession) streamUnifiedOutput() {
 	// The reader can be used directly.
 	for {
 		buf := make([]byte, bufferSize)
 
-		n, err := s.reader.Read(buf)
+		n, err := ds.reader.Read(buf)
 		if n > 0 {
 			reader := bytes.NewReader(buf[:n])
-			s.stdoutCh <- reader
+			ds.stdoutCh <- reader
 		}
 
 		if err != nil {
 			if err != io.EOF &&
 				!strings.Contains(err.Error(), "use of closed network connection") {
 				// connection is closed.
-				logger.WithField("container", s.respID).Warnf("read container tty error: %v", err)
+				logger.WithField("container", ds.respID).Warnf("read container tty error: %v", err)
 			}
 
-			close(s.stdoutCh)
+			close(ds.stdoutCh)
 
-			close(s.stderrCh)
+			close(ds.stderrCh)
 
 			return
 		}
@@ -427,23 +432,23 @@ func (s *dockerSession) streamUnifiedOutput() {
 
 // streamSplitOutput first reads and parses the header of the output,
 // then sends the data to the corresponding channel based on the frame type (stdout or stderr).
-func (s *dockerSession) streamSplitOutput() {
+func (ds *dockerSession) streamSplitOutput() {
 	for {
 		var (
 			metadata []byte
 			err      error
 		)
 		// Peek will block until reader got some data or error occurs.
-		metadata, err = s.reader.Peek(stdWriterPrefixLen)
+		metadata, err = ds.reader.Peek(stdWriterPrefixLen)
 		if err != nil {
 			// Connection is closed.
-			close(s.stdoutCh)
-			close(s.stderrCh)
+			close(ds.stdoutCh)
+			close(ds.stderrCh)
 
 			return
 		}
 
-		s.reader.Discard(stdWriterPrefixLen)
+		ds.reader.Discard(stdWriterPrefixLen)
 
 		stream := stdType(metadata[stdWriterFdIndex])
 		frameSize := int(binary.BigEndian.Uint32(metadata[stdWriterSizeIndex : stdWriterSizeIndex+4]))
@@ -463,9 +468,9 @@ func (s *dockerSession) streamSplitOutput() {
 				buffer = make([]byte, bufferSize)
 			}
 
-			n, err := io.ReadFull(s.reader, buffer)
+			n, err := io.ReadFull(ds.reader, buffer)
 			if err != nil {
-				logger.WithField("container", s.respID).Errorf("pollout error: %v", err)
+				logger.WithField("container", ds.respID).Errorf("pollout error: %v", err)
 
 				return
 			}
@@ -479,17 +484,17 @@ func (s *dockerSession) streamSplitOutput() {
 			// Check the first byte to know where to write.
 			switch stream {
 			case stdin:
-				logger.WithField("container", s.respID).Errorf("got stdin output from exec connection")
+				logger.WithField("container", ds.respID).Errorf("got stdin output from exec connection")
 
 				return
 			case stdout:
 				// Write on stdout.
-				s.stdoutCh <- reader
+				ds.stdoutCh <- reader
 			case stderr:
 				// Write on stderr.
-				s.stderrCh <- reader
+				ds.stderrCh <- reader
 			default:
-				logger.WithField("container", s.respID).Errorf("Unrecognized input header: %d", stream)
+				logger.WithField("container", ds.respID).Errorf("Unrecognized input header: %d", stream)
 
 				return
 			}
@@ -498,15 +503,15 @@ func (s *dockerSession) streamSplitOutput() {
 }
 
 // cleanLegacyProcess clean the legacy processes before session disconnects.
-func (s *dockerSession) cleanLegacyProcess(isExec bool) error {
+func (ds *dockerSession) cleanLegacyProcess(isExec bool) error {
 	if isExec {
 		// Now clean legacy process only support sidecar scene.
 		return nil
 	}
 	// Support the sidecar legacy process to kill.
-	cid := s.sidecarID
+	cid := ds.sidecarID
 
-	cont, err := s.client.ContainerInspect(context.Background(), cid)
+	cont, err := ds.client.ContainerInspect(context.Background(), cid)
 	if err != nil {
 		return err
 	}

@@ -40,6 +40,9 @@ var logger = logutil.GetLogger("trust-tunnel-agent")
 
 const (
 	maxWebsocketControlMsgLength = 123
+
+	// sessionIDTimeFormat is the time format used for generating session IDs.
+	sessionIDTimeFormat = "20060102150405"
 )
 
 // Config represents the configuration for the Handler.
@@ -106,7 +109,7 @@ func NewHandler(c *Config) (*Handler, error) {
 	h.authHandler = authHandler
 
 	// Pull the sidecar image during booting.
-	err := sidecar.Init(c.ContainerConfig.Endpoint, c.SidecarConfig.Image, c.SidecarConfig.ImageHubAuth, h.dockerClient)
+	err = sidecar.Init(c.ContainerConfig.Endpoint, c.SidecarConfig.Image, c.SidecarConfig.ImageHubAuth, h.dockerClient)
 	if err != nil {
 		logger.Errorf("init sidecar with image %s error: %v, ignore it", c.SidecarConfig.Image, err)
 	}
@@ -138,13 +141,8 @@ func (handler *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	requestLogger.Infoln("Request info: ", requestInfo)
 
 	// Check if the user has the permission the access the target.
-	if handler.authHandler != nil {
-		authResult := handler.authHandler.VerifyAccessPermission(requestInfo)
-		if authResult.Code != auth.Success {
-			logger.Errorf("authorization failed:%v", authResult)
-
-			return
-		}
+	if !handler.verifyAuth(requestInfo) {
+		return
 	}
 
 	// Construct request info to audit log.
@@ -160,23 +158,7 @@ func (handler *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	// Create a session configuration from the request information.
-	sessConf := &agentSession.Config{
-		TargetType:       requestInfo.TargetType,
-		UserName:         requestInfo.UserName,
-		LoginName:        requestInfo.LoginName,
-		LoginGroup:       requestInfo.LoginGroup,
-		ContainerID:      requestInfo.ContainerID,
-		Cmd:              requestInfo.Cmd,
-		Tty:              requestInfo.Tty,
-		Interactive:      requestInfo.Interactive,
-		PhysTunnel:       handler.config.SessionConfig.PhysTunnel,
-		SidecarImage:     handler.config.SidecarConfig.Image,
-		ImageHubAuth:     handler.config.SidecarConfig.ImageHubAuth,
-		Cpus:             requestInfo.Cpus,
-		MemoryMB:         requestInfo.MemoryMB,
-		DisableCleanMode: requestInfo.DisableCleanMode,
-		RootfsPrefix:     handler.config.ContainerConfig.RootfsPrefix,
-	}
+	sessConf := handler.createSessionConfig(requestInfo)
 
 	var (
 		sess   agentSession.Session
@@ -184,18 +166,11 @@ func (handler *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Find un-released sessions from list, and reuse it if exists.
-	handler.lock.Lock()
-	if staleSess, ok := handler.staleSessions[sessID]; ok && sessID != "" && requestInfo.UserName == staleSess.userName {
-		sess = staleSess.sess
-		// Remove stale session from list.
-		delete(handler.staleSessions, sessID)
-		requestLogger.Infof("reuse stale session %s", sessID)
-	}
-	handler.lock.Unlock()
+	sess, sessID = handler.tryReuseStaleSession(sessID, requestInfo.UserName, requestLogger)
 
 	// If session ID is not found in stale sessions, create a new session.
 	if sessID == "" {
-		sessID = time.Now().Format("20060102150405")
+		sessID = time.Now().Format(sessionIDTimeFormat)
 	}
 
 	// Create a logger for the session.
@@ -206,32 +181,10 @@ func (handler *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Session ID not found in stale sessions, create a new session.
 	if sess == nil {
-		if sessConf.TargetType == client.TargetContainer {
-			isSidecarSession, err = handler.containerPreCheck(sessConf, handler.config.ContainerConfig.ContainerRuntime)
-			if err != nil {
-				errMsg := sessionutil.WrapErrorWithCode(sessionutil.WrapContainerError(err.Error(), sessConf.ContainerID))
-				logger.Error(errMsg)
-				conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, truncWebsocketErrMsg("Establish session error: "+errMsg)))
-
-				return
-			}
-		}
-
-		sess, err = agentSession.EstablishSession(sessConf, handler.dockerClient, handler.containerdClient, handler.config.ContainerConfig.ContainerRuntime)
+		sess, isSidecarSession, err = handler.createNewSession(sessConf, conn, requestLogger)
 		if err != nil {
-			requestLogger.Warnf("Establish session error: %v", err)
-			errMsg := sessionutil.WrapErrorWithCode(err.Error())
-			logger.Error(errMsg)
-			conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, truncWebsocketErrMsg("Establish session error: "+errMsg)))
-
 			return
 		}
-
-		if isSidecarSession {
-			handler.currentSidecarNum++
-		}
-
-		requestLogger.Infoln("new session established")
 	}
 
 	// Create a new connection for the session.
@@ -253,30 +206,114 @@ func (handler *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Wait for an error to occur.
 	err = <-sessConn.errCh
 
+	handler.handleSessionDisconnect(sessID, requestInfo.UserName, sess, isSidecarSession, err, requestLogger)
+}
+
+// verifyAuth checks if the user has the permission to access the target.
+func (handler *Handler) verifyAuth(requestInfo *request.Info) bool {
+	if handler.authHandler == nil {
+		return true
+	}
+
+	authResult := handler.authHandler.VerifyAccessPermission(requestInfo)
+	if authResult.Code != auth.Success {
+		logger.Errorf("authorization failed:%v", authResult)
+		return false
+	}
+
+	return true
+}
+
+// createSessionConfig creates a session configuration from the request information.
+func (handler *Handler) createSessionConfig(requestInfo *request.Info) *agentSession.Config {
+	return &agentSession.Config{
+		TargetType:       requestInfo.TargetType,
+		UserName:         requestInfo.UserName,
+		LoginName:        requestInfo.LoginName,
+		LoginGroup:       requestInfo.LoginGroup,
+		ContainerID:      requestInfo.ContainerID,
+		Cmd:              requestInfo.Cmd,
+		Tty:              requestInfo.Tty,
+		Interactive:      requestInfo.Interactive,
+		PhysTunnel:       handler.config.SessionConfig.PhysTunnel,
+		SidecarImage:     handler.config.SidecarConfig.Image,
+		ImageHubAuth:     handler.config.SidecarConfig.ImageHubAuth,
+		Cpus:             requestInfo.Cpus,
+		MemoryMB:         requestInfo.MemoryMB,
+		DisableCleanMode: requestInfo.DisableCleanMode,
+		RootfsPrefix:     handler.config.ContainerConfig.RootfsPrefix,
+	}
+}
+
+// tryReuseStaleSession tries to find and reuse an un-released session from the stale sessions list.
+func (handler *Handler) tryReuseStaleSession(sessID string, userName string, requestLogger *logrus.Entry) (agentSession.Session, string) {
 	handler.lock.Lock()
+	defer handler.lock.Unlock()
+
+	if staleSess, ok := handler.staleSessions[sessID]; ok && sessID != "" && userName == staleSess.userName {
+		// Remove stale session from list.
+		delete(handler.staleSessions, sessID)
+		requestLogger.Infof("reuse stale session %s", sessID)
+		return staleSess.sess, sessID
+	}
+
+	return nil, sessID
+}
+
+// createNewSession creates a new session and returns it along with whether it's a sidecar session.
+func (handler *Handler) createNewSession(sessConf *agentSession.Config, conn *websocket.Conn, requestLogger *logrus.Entry) (agentSession.Session, bool, error) {
+	var isSidecarSession bool
+	var err error
+
+	if sessConf.TargetType == client.TargetContainer {
+		isSidecarSession, err = handler.containerPreCheck(sessConf, handler.config.ContainerConfig.ContainerRuntime)
+		if err != nil {
+			errMsg := sessionutil.WrapErrorWithCode(sessionutil.WrapContainerError(err.Error(), sessConf.ContainerID))
+			logger.Error(errMsg)
+			conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, truncWebsocketErrMsg("Establish session error: "+errMsg)))
+			return nil, isSidecarSession, err
+		}
+	}
+
+	sess, err := agentSession.EstablishSession(sessConf, handler.dockerClient, handler.containerdClient, handler.config.ContainerConfig.ContainerRuntime)
+	if err != nil {
+		requestLogger.Warnf("Establish session error: %v", err)
+		errMsg := sessionutil.WrapErrorWithCode(err.Error())
+		logger.Error(errMsg)
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, truncWebsocketErrMsg("Establish session error: "+errMsg)))
+		return nil, isSidecarSession, err
+	}
+
+	if isSidecarSession {
+		handler.currentSidecarNum++
+	}
+
+	requestLogger.Infoln("new session established")
+	return sess, isSidecarSession, nil
+}
+
+// handleSessionDisconnect handles the session disconnection, either reserving it for reuse or releasing it.
+func (handler *Handler) handleSessionDisconnect(sessID string, userName string, sess agentSession.Session, isSidecarSession bool, err error, requestLogger *logrus.Entry) {
+	handler.lock.Lock()
+	defer handler.lock.Unlock()
+
 	if err != nil {
 		// Client is closed abnormally.
 		// Append stale session to list for delay release.
 		handler.staleSessions[sessID] = &StaleSession{
-			userName:         requestInfo.UserName,
+			userName:         userName,
 			sess:             sess,
 			deathClock:       time.After(handler.config.SessionConfig.DelayReleaseSessionTimeout),
 			isSidecarSession: isSidecarSession,
 		}
-
 		requestLogger.Infof("reserve session %s\n", sessID)
-	} else {
-		// Do cleanup.
-		err = handler.releaseSession(sessID, sess)
-		if err == nil && isSidecarSession {
-			handler.currentSidecarNum--
-		}
-	}
-	handler.lock.Unlock()
-
-	if err != nil {
 		requestLogger.Infoln("session disconnected with err: ", err)
 	} else {
+		// Do cleanup.
+		releaseErr := handler.releaseSession(sessID, sess)
+		if releaseErr == nil && isSidecarSession {
+			handler.currentSidecarNum--
+		}
 		requestLogger.Infoln("session disconnected")
 	}
 }
@@ -328,7 +365,7 @@ func (handler *Handler) checkSidecarNum(sessConf *agentSession.Config, runtime a
 		}
 	}
 
-	return false, nil
+	return isContainerSidecarSession, nil
 }
 
 // createCmdLogger creates a new CmdLogger with the given logger and request information.

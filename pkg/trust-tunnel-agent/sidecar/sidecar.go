@@ -35,6 +35,7 @@ var logger = logutil.GetLogger("trust-tunnel-agent")
 const (
 	defaultSidecarImage             = "trust-tunnel-sidecar:latest"
 	defaultCleanLegacySidecarPeriod = 5 * time.Minute
+	legacyContainerMaxAge           = time.Hour
 )
 
 type Config struct {
@@ -158,20 +159,20 @@ func CleanLegacyContainerPeriodically(apiClient client.CommonAPIClient) {
 
 		var legacySidecarNum int
 
-		for _, c := range containers {
-			createdTime := time.Unix(c.Created, 0)
+		for _, cont := range containers {
+			createdTime := time.Unix(cont.Created, 0)
 
-			if strings.HasPrefix(c.Image, defaultSidecarImage) && c.State != "running" && createdTime.Before(time.Now().Add(-time.Hour)) {
+			if strings.HasPrefix(cont.Image, defaultSidecarImage) && cont.State != "running" && createdTime.Before(time.Now().Add(-legacyContainerMaxAge)) {
 				legacySidecarNum++
 
-				err := apiClient.ContainerRemove(context.Background(), c.ID, container.RemoveOptions{Force: true})
+				err := apiClient.ContainerRemove(context.Background(), cont.ID, container.RemoveOptions{Force: true})
 				if err != nil {
-					logger.Errorf("remove legacy container %s error:%v", c.ID, err)
+					logger.Errorf("remove legacy container %s error:%v", cont.ID, err)
 
 					continue
 				}
 
-				logger.Infof("remove legacy container with image %s done", c.Image)
+				logger.Infof("remove legacy container with image %s done", cont.Image)
 			}
 		}
 	}
