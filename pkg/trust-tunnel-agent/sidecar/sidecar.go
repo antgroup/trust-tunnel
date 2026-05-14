@@ -25,8 +25,8 @@ import (
 	"time"
 	"trust-tunnel/pkg/common/logutil"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	imageTypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 )
 
@@ -35,8 +35,10 @@ var logger = logutil.GetLogger("trust-tunnel-agent")
 const (
 	defaultSidecarImage             = "trust-tunnel-sidecar:latest"
 	defaultCleanLegacySidecarPeriod = 5 * time.Minute
+	legacyContainerMaxAge           = time.Hour
 )
 
+// Config holds the sidecar configuration.
 type Config struct {
 	// Image specifies the image of the sidecar container.
 	Image string
@@ -48,9 +50,25 @@ type Config struct {
 	Limit int
 }
 
+// APIClient defines the Docker API operations needed by the sidecar package.
+// This interface avoids importing the session package (which would create a cycle).
+type APIClient interface {
+	// ImagePull pulls an image from the registry.
+	ImagePull(ctx context.Context, image string, options types.ImagePullOptions) (io.ReadCloser, error)
+
+	// ImageInspectWithRaw returns image information.
+	ImageInspectWithRaw(ctx context.Context, imageID string) (types.ImageInspect, []byte, error)
+
+	// ContainerList returns the list of containers.
+	ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error)
+
+	// ContainerRemove removes a container.
+	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
+}
+
 // PullMissingImage tries to pull a Docker image if it does not exist locally or force updating is true.
 // It first checks if the image exists locally, then pulls the image from the registry if necessary.
-func PullMissingImage(image, auth string, force bool, apiClient client.CommonAPIClient) (string, error) {
+func PullMissingImage(image, auth string, force bool, apiClient APIClient) (string, error) {
 	if apiClient == nil {
 		return "", fmt.Errorf("container client is not ready")
 	}
@@ -78,7 +96,7 @@ func PullMissingImage(image, auth string, force bool, apiClient client.CommonAPI
 
 	logger.Infof("pulling image %s with tag %s", name, tag)
 
-	body, err := apiClient.ImagePull(context.Background(), name+":"+tag, imageTypes.PullOptions{RegistryAuth: base64.URLEncoding.EncodeToString([]byte(auth))})
+	body, err := apiClient.ImagePull(context.Background(), name+":"+tag, types.ImagePullOptions{RegistryAuth: base64.URLEncoding.EncodeToString([]byte(auth))})
 	if err != nil {
 		return image, err
 	}
@@ -113,7 +131,7 @@ func PullMissingImage(image, auth string, force bool, apiClient client.CommonAPI
 // Init sets up the sidecar container environment.
 // It primarily verifies the availability of the Docker endpoint and pulls the required sidecar image.
 // If the Docker environment is not ready or the image pull fails, returns an error.
-func Init(endpoint, image, auth string, apiClient client.CommonAPIClient) error {
+func Init(endpoint, image, auth string, apiClient APIClient) error {
 	if apiClient == nil {
 		return fmt.Errorf("container client is nil")
 	}
@@ -139,7 +157,7 @@ func Init(endpoint, image, auth string, apiClient client.CommonAPIClient) error 
 // In some situations, when creating a large number of sidecar sessions,
 // sidecar containers may not be successfully reclaimed due to container performance issues，
 // we need to clean legacy sidecar(not running and created an hour ago) container periodically.
-func CleanLegacyContainerPeriodically(apiClient client.CommonAPIClient) {
+func CleanLegacyContainerPeriodically(apiClient APIClient) {
 	logger.Infof("start clean legacy trust-tunnel-sidecar containers  periodcally")
 
 	if apiClient == nil {
@@ -158,26 +176,26 @@ func CleanLegacyContainerPeriodically(apiClient client.CommonAPIClient) {
 
 		var legacySidecarNum int
 
-		for _, c := range containers {
-			createdTime := time.Unix(c.Created, 0)
+		for _, cont := range containers {
+			createdTime := time.Unix(cont.Created, 0)
 
-			if strings.HasPrefix(c.Image, defaultSidecarImage) && c.State != "running" && createdTime.Before(time.Now().Add(-time.Hour)) {
+			if strings.HasPrefix(cont.Image, defaultSidecarImage) && cont.State != "running" && createdTime.Before(time.Now().Add(-legacyContainerMaxAge)) {
 				legacySidecarNum++
 
-				err := apiClient.ContainerRemove(context.Background(), c.ID, container.RemoveOptions{Force: true})
+				err := apiClient.ContainerRemove(context.Background(), cont.ID, container.RemoveOptions{Force: true})
 				if err != nil {
-					logger.Errorf("remove legacy container %s error:%v", c.ID, err)
+					logger.Errorf("remove legacy container %s error:%v", cont.ID, err)
 
 					continue
 				}
 
-				logger.Infof("remove legacy container with image %s done", c.Image)
+				logger.Infof("remove legacy container with image %s done", cont.Image)
 			}
 		}
 	}
 }
 
-func imageExists(cli client.CommonAPIClient, image string) (bool, error) {
+func imageExists(cli APIClient, image string) (bool, error) {
 	_, _, err := cli.ImageInspectWithRaw(context.Background(), image)
 	if err == nil {
 		return true, nil

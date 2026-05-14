@@ -4,6 +4,14 @@ cmd/.DS_Store
 
 .idea
 .out/
+out/
 
 vendor/
-.vscode/ 
+.vscode/
+
+# Build artifacts
+COMMIT_MSG
+git-pre-push-hook-warn.log
+
+# AI/IDE config (personal, not project)
+.claude/ 
