@@ -213,12 +213,13 @@ func execContainerd(c *Config, client *containerd.Client, namespace string) (*co
 
 	// Create a namespace context and a cancel function.
 	ctx := namespaces.WithNamespace(context.Background(), namespace)
-	ctx, cancel := gocontext.WithCancel(ctx) //nolint:govet
+	ctx, cancel := gocontext.WithCancel(ctx)
+	defer cancel()
 
 	// Load the container using the containerd client.
 	container, err := client.LoadContainer(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("load container err:%v", err) //nolint:govet
+		return nil, fmt.Errorf("load container err:%v", err)
 	}
 
 	// Get the container spec.

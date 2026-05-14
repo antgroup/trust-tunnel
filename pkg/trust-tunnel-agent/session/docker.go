@@ -30,7 +30,6 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	"github.com/sirupsen/logrus"
 )
 
@@ -77,7 +76,7 @@ const (
 
 type dockerSession struct {
 	ctx       context.Context
-	client    client.CommonAPIClient
+	client    DockerClient
 	respID    string
 	isExec    bool
 	conn      net.Conn
@@ -204,7 +203,7 @@ func (ds *dockerSession) ExitCode() int {
 }
 
 // establishDockerSession creates a new Docker session based on the given configuration.
-func establishDockerSession(config *Config, containerClient client.CommonAPIClient) (*dockerSession, error) {
+func establishDockerSession(config *Config, containerClient DockerClient) (*dockerSession, error) {
 	if containerClient == nil {
 		return nil, fmt.Errorf("container Client is nil")
 	}
@@ -248,7 +247,7 @@ func establishDockerSession(config *Config, containerClient client.CommonAPIClie
 }
 
 // attachSidecar attaches a sidecar container to the given container and returns a new Docker session.
-func attachSidecar(config *Config, apiClient client.CommonAPIClient) (*dockerSession, error) {
+func attachSidecar(config *Config, apiClient DockerClient) (*dockerSession, error) {
 	ctx := context.Background()
 
 	// Pull the sidecar image if it's not already present.
@@ -352,7 +351,7 @@ func attachSidecar(config *Config, apiClient client.CommonAPIClient) (*dockerSes
 
 // execContainer executes the given command inside the given container using the way of 'docker exec',
 // returns a new Docker session.
-func execContainer(config *Config, apiClient client.CommonAPIClient) (*dockerSession, error) {
+func execContainer(config *Config, apiClient DockerClient) (*dockerSession, error) {
 	ctx := context.Background()
 
 	// Configure the exec config.
@@ -528,7 +527,7 @@ func (ds *dockerSession) cleanLegacyProcess(isExec bool) error {
 }
 
 // waitContainer waits for the container to stop running and returns its exit status code.
-func waitContainer(cli client.CommonAPIClient, containerID string) (int, error) {
+func waitContainer(cli DockerClient, containerID string) (int, error) {
 	statusCh, errCh := cli.ContainerWait(context.Background(), containerID, container.WaitConditionNotRunning)
 
 	for {

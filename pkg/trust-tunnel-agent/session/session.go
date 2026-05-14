@@ -18,7 +18,6 @@ import (
 	"io"
 	"trust-tunnel/pkg/common/logutil"
 
-	dockerClient "github.com/docker/docker/client"
 	client "trust-tunnel/pkg/trust-tunnel-client"
 
 	"github.com/containerd/containerd"
@@ -130,7 +129,7 @@ type ContainerConfig struct {
 
 // EstablishSession establishes a session based on targetType in the config,
 // returns a physical session or a container session.
-func EstablishSession(config *Config, apiClient dockerClient.CommonAPIClient, containerdClient *containerd.Client, containerRuntime ContainerRuntime) (Session, error) {
+func EstablishSession(config *Config, apiClient DockerClient, containerdClient *containerd.Client, containerRuntime ContainerRuntime) (Session, error) {
 	if config.TargetType == client.TargetPhys {
 		return establishPhysSession(config)
 	}
@@ -149,7 +148,7 @@ func establishPhysSession(config *Config) (Session, error) {
 }
 
 // establishContainerSession establishes a container session and returns the session and an error if any.
-func establishContainerSession(config *Config, apiClient dockerClient.CommonAPIClient, containerdClient *containerd.Client, containerRuntime ContainerRuntime) (Session, error) {
+func establishContainerSession(config *Config, apiClient DockerClient, containerdClient *containerd.Client, containerRuntime ContainerRuntime) (Session, error) {
 	if containerRuntime == Docker {
 		return establishDockerSession(config, apiClient)
 	}

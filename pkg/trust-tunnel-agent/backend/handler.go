@@ -31,7 +31,6 @@ import (
 	client "trust-tunnel/pkg/trust-tunnel-client"
 
 	"github.com/containerd/containerd"
-	dockerAPIClient "github.com/docker/docker/client"
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 )
@@ -64,7 +63,7 @@ type Config struct {
 type Handler struct {
 	config            *Config
 	staleSessions     map[string]*StaleSession
-	dockerClient      dockerAPIClient.CommonAPIClient
+	dockerClient      agentSession.DockerClient
 	containerdClient  *containerd.Client
 	authHandler       auth.Handler
 	lock              sync.Mutex
@@ -83,7 +82,7 @@ func NewHandler(c *Config) (*Handler, error) {
 		if err != nil {
 			logger.Errorf("create container API client error: %s", err.Error())
 		} else {
-			h.dockerClient = dockerClient
+			h.dockerClient = agentSession.NewDockerClientAdapter(dockerClient)
 		}
 	} else {
 		containerdClient, err := containerd.New(c.ContainerConfig.Endpoint)
@@ -337,10 +336,11 @@ func (handler *Handler) checkContainerRuntime(sessConf *agentSession.Config, run
 	var err error
 	// In case of when trust-tunnel-agent starts,the container daemon is not ready,but after some time the container daemon is ready again,
 	if sessConf.TargetType == client.TargetContainer && (runtime == agentSession.Docker) && handler.dockerClient == nil {
-		handler.dockerClient, err = sessionutil.CreateDockerClient(handler.config.ContainerConfig.Endpoint, handler.config.ContainerConfig.DockerAPIVersion)
-		if err != nil {
-			return err
+		dockerClient, createErr := sessionutil.CreateDockerClient(handler.config.ContainerConfig.Endpoint, handler.config.ContainerConfig.DockerAPIVersion)
+		if createErr != nil {
+			return createErr
 		}
+		handler.dockerClient = agentSession.NewDockerClientAdapter(dockerClient)
 	} else if runtime == agentSession.Containerd && handler.containerdClient == nil {
 		handler.containerdClient, err = containerd.New(handler.config.ContainerConfig.Endpoint)
 		if err != nil {
