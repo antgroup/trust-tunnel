@@ -37,7 +37,8 @@ func NewDockerClientAdapter(client dockerClient.CommonAPIClient) DockerClient {
 
 // ContainerCreate implements DockerClient.
 func (d *DockerClientAdapter) ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig,
-	networkingConfig *network.NetworkingConfig, platform *v1.Platform, name string) (container.CreateResponse, error) {
+	networkingConfig *network.NetworkingConfig, platform *v1.Platform, name string,
+) (container.CreateResponse, error) {
 	return d.client.ContainerCreate(ctx, config, hostConfig, networkingConfig, platform, name)
 }
 

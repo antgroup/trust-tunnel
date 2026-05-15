@@ -24,10 +24,11 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
-      - name: Build
-        run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 make trust-tunnel-agent
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 make trust-tunnel-client
+      - name: Build agent
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-X 'trust-tunnel/cmd/trust-tunnel-agent/app.Version=dev'" -o out/trust-tunnel-agent ./cmd/trust-tunnel-agent
+
+      - name: Build client
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-X 'trust-tunnel/cmd/trust-tunnel-client/app.Version=dev'" -o out/trust-tunnel-client ./cmd/trust-tunnel-client
 
       - name: Vet
         run: go vet ./...
@@ -48,5 +49,5 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.59
           args: --timeout=5m

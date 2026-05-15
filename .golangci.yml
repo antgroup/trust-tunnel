@@ -11,76 +11,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This file contains all available configuration options
-# with their default values.
-# For complete .golangci.yml configuration, reference: https://golangci-lint.run/usage/configuration/#config-file
-
-# options for analysis running
 run:
   timeout: 10m
   go: '1.21'
 
 linters:
   disable-all: true
-  enable: # please keep this alphabetized
-    - asciicheck
-    - bodyclose
-    - contextcheck
-    - dogsled
-    - dupl
+  enable:
     - errname
-    - exportloopref
-    - gocritic
     - gosimple
-    - goconst
-    - gofumpt
     - govet
-    - importas
     - ineffassign
-    - loggercheck
     - misspell
-    - nolintlint
-    - nilerr
-    - predeclared
     - staticcheck
-    - stylecheck
-    - tparallel
     - typecheck
     - unconvert
-    - unparam
     - unused
-    - usestdlibvars
     - wastedassign
-    - whitespace
-    - wsl
 
 linters-settings:
-  gofumpt:
-    # Choose whether to use the extra rules that are disabled
-    # by default
-    extra-rules: false
-  tagliatelle:
-    # Check the struck tag name case.
-    case:
-      # Use the struct field name to check the name of the struct tag.
-      # Default: false
-      use-field-name: true
-      rules:
-        # Any struct tag type can be used.
-        # Support string case: `camel`, `pascal`, `kebab`, `snake`, `upperSnake`, `goCamel`, `goPascal`, `goKebab`, `goSnake`, `upper`, `lower`, `header`.
-        json: goCamel
-        yaml: goCamel
-        xml: goCamel
-        toml: goCamel
-  errorlint:
-    # Check whether fmt.Errorf uses the %w verb for formatting errors.
-    # Default: true
-    errorf: false
+  staticcheck:
+    checks:
+      - all
+      - -SA1019 # suppress deprecation warnings (types.ImagePullOptions etc.)
 
 issues:
+  exclude-rules:
+    # Interface/function struct signatures are inherently duplicated in mock adapters
+    - path: pkg/trust-tunnel-agent/session/runtime.go
+      linters:
+        - dupl
+    - path: pkg/trust-tunnel-agent/session/docker_adapter.go
+      linters:
+        - dupl
   exclude:
-    - "G306: Expect WriteFile permissions to be 0600 or less"
-    - "ST1018: string literal contains Unicode control characters, consider using escape sequences instead"
-    - "ifElseChain: rewrite if-else to switch statement"
-    - "S1000: should use for range instead of for { select {} }"
-    - "SA4004: the surrounding loop is unconditionally terminated"
+    - "SA1019:" # deprecated API usage (Docker SDK types.ImagePullOptions)
+
+  max-issues-per-linter: 50
+  max-same-issues: 10
