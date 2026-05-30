@@ -30,7 +30,7 @@ jobs:
       - name: Create checksums
         run: |
           cd out
-          sha256sum * > checksums.txt
+          find . -type f ! -name checksums.txt -exec sha256sum {} \; | sort > checksums.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
