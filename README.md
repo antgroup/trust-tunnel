@@ -104,11 +104,11 @@ make trust-tunnel-agent
 |------|-------------|
 | `-o, --host` | Target host IP address |
 | `-it` | Interactive TTY mode |
-| `--type` | Connection type: `host` or `container` |
+| `--type` | Connection type: `phys` or `container` |
 | `--cid` | Container ID (required when type is `container`) |
-| `--clean` | Enable sandbox mode (default: true) |
-| `--cpu` | CPU limit for sandbox (e.g., `0.5`) |
-| `--memory` | Memory limit for sandbox (e.g., `512M`) |
+| `-d, --disable-clean-mode` | Disable sandbox mode |
+| `--cpus` | CPU limit for sandbox (e.g., `0.5`) |
+| `--memory` | Memory limit in MB for sandbox (e.g., `512`) |
 
 ### Remote Physical Host
 
@@ -141,7 +141,7 @@ Interactive login:
 ### With Resource Limits (Sandbox Mode)
 
 ```bash
-./out/trust-tunnel-client -o $HOST_IP --clean --cpu 0.5 --memory 512M sh -c "ls /"
+./out/trust-tunnel-client -o $HOST_IP --cpus 0.5 --memory 512 sh -c "ls /"
 ```
 
 ## Configuration
