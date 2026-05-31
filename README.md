@@ -107,8 +107,8 @@ make trust-tunnel-agent
 | `--type` | Connection type: `phys` or `container` |
 | `--cid` | Container ID (required when type is `container`) |
 | `-d, --disable-clean-mode` | Disable sandbox mode |
-| `--cpus` | CPU limit for sandbox (e.g., `0.5`) |
-| `--memory` | Memory limit in MB for sandbox (e.g., `512`) |
+| `-c, --cpus` | CPU limit for sandbox (e.g., `0.5`) |
+| `-m, --memory` | Memory limit in MB for sandbox (e.g., `512`) |
 
 ### Remote Physical Host
 
