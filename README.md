@@ -209,7 +209,3 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 ## Maintainers
 
 - [xiaolin-lj](https://github.com/xiaolin-lj)
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=antgroup/trust-tunnel&type=Date)](https://www.star-history.com/#antgroup/trust-tunnel&Date)
